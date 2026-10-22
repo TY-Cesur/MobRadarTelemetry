@@ -2,6 +2,14 @@
 #          MobRadarTelemetry - Yapilandirma Dosyasi
 # ========================================================
 
+# Kara Liste / Yoksayilan Moblar (Ignored Mobs / Blacklist)
+# Bu listedeki moblar radarda taranmaz, hedef alsa dahi uyari vermez ve /radar liste'de gorunmez.
+# Minecraft EntityType isimleri (BUYUK HARFLE): BAT, SLIME, MAGMA_CUBE, PHANTOM, ENDERMAN, ZOMBIE vb.
+ignored-mobs:
+  - "BAT"
+  - "SLIME"
+  - "MAGMA_CUBE"
+
 # Surekli Acik Ekran Radari (Action Bar HUD) Ayarlari
 hud:
   # Oyuncu oyuna girdiginde radar HUD'i otomatik acilsin mi?

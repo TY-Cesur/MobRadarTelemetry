@@ -29,14 +29,15 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
     private final Map<UUID, UUID> mobTargetMap = new HashMap<>();
     private final Set<UUID> activeRadarPlayers = new HashSet<>();
     private final Map<UUID, Long> lastSoundTime = new HashMap<>();
+    private final Set<String> ignoredMobs = new HashSet<>();
 
     private File logFile;
     private final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
 
     @Override
     public void onEnable() {
-        // config.yml olustur veya yukle
         saveDefaultConfig();
+        loadConfigOptions();
 
         if (!getDataFolder().exists()) {
             getDataFolder().mkdirs();
@@ -63,15 +64,31 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
         getServer().getScheduler().runTaskTimer(this, this::updateRadarHud, interval, interval);
 
         logToFile("SYSTEM", "MobRadar basariyla yuklendi.");
-        getLogger().info("MobRadar aktif edildi. Config ve log hazir.");
+        getLogger().info("MobRadar aktif edildi. Yoksayilan mob sayisi: " + ignoredMobs.size());
     }
 
     @Override
     public void onDisable() {
         activeRadarPlayers.clear();
         mobTargetMap.clear();
+        ignoredMobs.clear();
         logToFile("SYSTEM", "MobRadar devre disi birakildi.");
         getLogger().info("MobRadar kapatildi.");
+    }
+
+    private void loadConfigOptions() {
+        ignoredMobs.clear();
+        List<String> list = getConfig().getStringList("ignored-mobs");
+        for (String s : list) {
+            if (s != null && !s.trim().isEmpty()) {
+                ignoredMobs.add(s.toUpperCase().trim());
+            }
+        }
+    }
+
+    private boolean isMobIgnored(EntityType type) {
+        if (type == null) return false;
+        return ignoredMobs.contains(type.name().toUpperCase());
     }
 
     private synchronized void logToFile(String tag, String message) {
@@ -124,6 +141,11 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
             double threatDistance = Double.MAX_VALUE;
 
             for (Entity e : nearby) {
+                // Kara listedeki moblari filtrele
+                if (isMobIgnored(e.getType())) {
+                    continue;
+                }
+
                 if (e instanceof Monster) {
                     totalHostiles++;
                     double dist = Math.round(e.getLocation().distance(pLoc) * 10.0) / 10.0;
@@ -186,6 +208,12 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onEntityTarget(EntityTargetLivingEntityEvent event) {
         Entity entity = event.getEntity();
+
+        // Kara listedeki moblari yoksay
+        if (isMobIgnored(entity.getType())) {
+            return;
+        }
+
         LivingEntity target = event.getTarget();
         UUID mobId = entity.getUniqueId();
         String mobName = getMobName(entity.getType());
@@ -249,6 +277,11 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
 
         Player player = (Player) event.getDamager();
         Entity victim = event.getEntity();
+
+        if (isMobIgnored(victim.getType())) {
+            return;
+        }
+
         Location hitLoc = victim.getLocation();
 
         if (victim instanceof PigZombie) {
@@ -258,7 +291,7 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
             List<PigZombie> alerted = new ArrayList<>();
 
             for (Entity e : nearby) {
-                if (e instanceof PigZombie && !e.getUniqueId().equals(victim.getUniqueId())) {
+                if (e instanceof PigZombie && !e.getUniqueId().equals(victim.getUniqueId()) && !isMobIgnored(e.getType())) {
                     PigZombie pz = (PigZombie) e;
                     alerted.add(pz);
                     pz.setTarget(player);
@@ -296,7 +329,7 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
                 List<Entity> nearby = victim.getNearbyEntities(radius, radius, radius);
                 int wolfCount = 0;
                 for (Entity e : nearby) {
-                    if (e instanceof Wolf && !((Wolf) e).isTamed()) {
+                    if (e instanceof Wolf && !((Wolf) e).isTamed() && !isMobIgnored(e.getType())) {
                         wolfCount++;
                         ((Wolf) e).setTarget(player);
                     }
@@ -310,7 +343,7 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
             List<Entity> nearby = victim.getNearbyEntities(radius, radius, radius);
             int beeCount = 0;
             for (Entity e : nearby) {
-                if (e instanceof Bee) {
+                if (e instanceof Bee && !isMobIgnored(e.getType())) {
                     beeCount++;
                     ((Bee) e).setTarget(player);
                 }
@@ -345,7 +378,8 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
         if (args.length > 0 && (args[0].equalsIgnoreCase("reload") || args[0].equalsIgnoreCase("yenile"))) {
             if (sender.hasPermission("mobradar.admin") || sender.isOp() || !(sender instanceof Player)) {
                 reloadConfig();
-                sender.sendMessage("§8[§6Radar§8] §aYapilandirma dosyasi (config.yml) basariyla yenilendi.");
+                loadConfigOptions();
+                sender.sendMessage("§8[§6Radar§8] §aYapilandirma dosyasi (config.yml) basariyla yenilendi. Yoksayilan moblar guncellendi.");
                 return true;
             }
         }
@@ -371,11 +405,15 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
                 return true;
             }
             if (sub.equals("liste") || sub.equals("list")) {
-                player.sendMessage("§8[§6Radar§8] §e40 blok icindeki moblar:");
+                player.sendMessage("§8[§6Radar§8] §e40 blok icindeki moblar (Filtrelenmis):");
                 List<Entity> nearby = player.getNearbyEntities(40.0, 20.0, 40.0);
                 int count = 0;
 
                 for (Entity e : nearby) {
+                    if (isMobIgnored(e.getType())) {
+                        continue;
+                    }
+
                     if (e instanceof Monster) {
                         count++;
                         double dist = Math.round(e.getLocation().distance(player.getLocation()) * 10.0) / 10.0;
@@ -400,14 +438,25 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
                 }
                 return true;
             }
+            if (sub.equals("blacklist") || sub.equals("ignored") || sub.equals("yoksayilanlar")) {
+                player.sendMessage("§8[§6Radar§8] §eYoksayilan Moblar (Kara Liste):");
+                if (ignoredMobs.isEmpty()) {
+                    player.sendMessage(" §7Hicbir mob yoksayilmiyor.");
+                } else {
+                    player.sendMessage(" §c" + String.join(", ", ignoredMobs));
+                }
+                player.sendMessage("§8(Duzenlemek icin: config.yml -> ignored-mobs)");
+                return true;
+            }
         }
 
         boolean on = activeRadarPlayers.contains(pid);
         player.sendMessage("§8=== §6Mob Radar §8===");
-        player.sendMessage("§7Durum: " + (on ? "§aAcik" : "§cKapali"));
+        player.sendMessage("§7Durum: " + (on ? "§aAcik" : "§cKapali") + " §8| §7Kara Liste: §c" + ignoredMobs.size() + " mob");
         player.sendMessage("§f/radar ac §7- Ekran radarini acar");
         player.sendMessage("§f/radar kapat §7- Ekran radarini kapatir");
         player.sendMessage("§f/radar liste §7- Yakinlardaki moblari listeler");
+        player.sendMessage("§f/radar blacklist §7- Yoksayilan moblari gosterir");
         if (player.isOp()) {
             player.sendMessage("§f/radar reload §7- config.yml dosyasini yeniler");
         }
