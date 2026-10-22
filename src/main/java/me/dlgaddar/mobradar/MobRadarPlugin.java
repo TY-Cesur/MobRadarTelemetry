@@ -35,6 +35,9 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
 
     @Override
     public void onEnable() {
+        // config.yml olustur veya yukle
+        saveDefaultConfig();
+
         if (!getDataFolder().exists()) {
             getDataFolder().mkdirs();
         }
@@ -49,15 +52,18 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
             getCommand("mobradar").setExecutor(this);
         }
 
-        for (Player player : Bukkit.getOnlinePlayers()) {
-            activeRadarPlayers.add(player.getUniqueId());
+        boolean defaultOn = getConfig().getBoolean("hud.enabled-by-default", true);
+        if (defaultOn) {
+            for (Player player : Bukkit.getOnlinePlayers()) {
+                activeRadarPlayers.add(player.getUniqueId());
+            }
         }
 
-        // Action Bar HUD guncelleme gorevi (10 tick = 0.5 saniye)
-        getServer().getScheduler().runTaskTimer(this, this::updateRadarHud, 10L, 10L);
+        long interval = getConfig().getLong("hud.update-interval-ticks", 10L);
+        getServer().getScheduler().runTaskTimer(this, this::updateRadarHud, interval, interval);
 
         logToFile("SYSTEM", "MobRadar basariyla yuklendi.");
-        getLogger().info("MobRadar aktif edildi. Log: " + logFile.getAbsolutePath());
+        getLogger().info("MobRadar aktif edildi. Config ve log hazir.");
     }
 
     @Override
@@ -69,6 +75,10 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
     }
 
     private synchronized void logToFile(String tag, String message) {
+        if (!getConfig().getBoolean("logging.file-logging", true)) {
+            return;
+        }
+
         String time = dateFormat.format(new Date());
         String cleanMessage = ChatColor.stripColor(message);
         String line = String.format("[%s] [%s] %s", time, tag, cleanMessage);
@@ -80,22 +90,31 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
         }
     }
 
+    private String color(String text) {
+        return ChatColor.translateAlternateColorCodes('&', text);
+    }
+
     @EventHandler
     public void onPlayerJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
-        activeRadarPlayers.add(player.getUniqueId());
+        if (getConfig().getBoolean("hud.enabled-by-default", true)) {
+            activeRadarPlayers.add(player.getUniqueId());
+        }
 
-        player.sendMessage("§8[§6Radar§8] §7Canli mob radari devrede. Kapatmak veya acmak icin: §f/radar");
+        String prefix = color(getConfig().getString("messages.prefix", "&8[&6Radar&8] "));
+        player.sendMessage(prefix + "§7Canli mob radari devrede. Komutlar icin: §f/radar");
     }
 
     private void updateRadarHud() {
+        double scanRadius = getConfig().getDouble("hud.scan-radius", 40.0);
+
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (!activeRadarPlayers.contains(player.getUniqueId())) {
                 continue;
             }
 
             Location pLoc = player.getLocation();
-            List<Entity> nearby = player.getNearbyEntities(40.0, 20.0, 40.0);
+            List<Entity> nearby = player.getNearbyEntities(scanRadius, scanRadius / 2.0, scanRadius);
 
             int totalHostiles = 0;
             int targetingCount = 0;
@@ -129,18 +148,27 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
 
             String hud;
             if (targetingCount > 0) {
-                hud = String.format("§c[DIKKAT] %s seni hedef aldi! (%.1fm) §8| §7Takip: §c%d mob §8| §7Cevrede: %d",
-                        threatMobName, threatDistance, targetingCount, totalHostiles);
+                String template = getConfig().getString("messages.hud-danger", "&c[DIKKAT] %mob% seni hedef aldi! (%distance%m) &8| &7Takip: &c%targeting% mob &8| &7Cevrede: %total%");
+                hud = color(template
+                        .replace("%mob%", threatMobName != null ? threatMobName : "-")
+                        .replace("%distance%", String.valueOf(threatDistance))
+                        .replace("%targeting%", String.valueOf(targetingCount))
+                        .replace("%total%", String.valueOf(totalHostiles)));
             } else if (nearestDistance <= 16.0 && nearestMobName != null) {
-                String distColor = nearestDistance <= 6.0 ? "§c" : "§e";
-                hud = String.format("§6[Radar] §7En yakin: %s%s (%.1fm) §8| §7Cevrede: %d mob",
-                        distColor, nearestMobName, nearestDistance, totalHostiles);
+                String template = getConfig().getString("messages.hud-warning", "&6[Radar] &7En yakin: %mob% (%distance%m) &8| &7Cevrede: %total% mob");
+                hud = color(template
+                        .replace("%mob%", nearestMobName)
+                        .replace("%distance%", String.valueOf(nearestDistance))
+                        .replace("%total%", String.valueOf(totalHostiles)));
             } else {
                 if (totalHostiles == 0) {
-                    hud = "§a[Radar] Guvendesin §8(Yakininda mob yok)";
+                    hud = color(getConfig().getString("messages.hud-safe", "&a[Radar] Guvendesin &8(Yakininda mob yok)"));
                 } else {
-                    hud = String.format("§a[Radar] Guvendesin §8| §7En yakin: %s (%.1fm) §8| §7Toplam: %d",
-                            nearestMobName != null ? nearestMobName : "-", nearestDistance < 1000 ? nearestDistance : 0.0, totalHostiles);
+                    String template = getConfig().getString("messages.hud-safe-nearby", "&a[Radar] Guvendesin &8| &7En yakin: %mob% (%distance%m) &8| &7Toplam: %total%");
+                    hud = color(template
+                            .replace("%mob%", nearestMobName != null ? nearestMobName : "-")
+                            .replace("%distance%", String.valueOf(nearestDistance < 1000 ? nearestDistance : 0.0))
+                            .replace("%total%", String.valueOf(totalHostiles)));
                 }
             }
 
@@ -170,16 +198,23 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
 
             mobTargetMap.put(mobId, player.getUniqueId());
 
-            String consoleMsg = String.format("%s oyuncuyu algiladi: %.1fm (Mob: X:%.0f Y:%.0f Z:%.0f | Oyuncu: %s)",
-                    mobName, distance, mobLoc.getX(), mobLoc.getY(), mobLoc.getZ(), player.getName());
-
-            String chatMsg = String.format("§8[§cRadar§8] §c%s §7sizi §e%.1f blok §7mesafeden algiladi! §8(X:%.0f Y:%.0f Z:%.0f)",
-                    mobName, distance, mobLoc.getX(), mobLoc.getY(), mobLoc.getZ());
+            String template = getConfig().getString("messages.target-acquired", "&c%mob% &7sizi &e%distance% blok &7mesafeden algiladi! &8(X:%x% Y:%y% Z:%z%)");
+            String chatMsg = color(getConfig().getString("messages.prefix", "&8[&6Radar&8] ") + template
+                    .replace("%mob%", mobName)
+                    .replace("%distance%", String.valueOf(distance))
+                    .replace("%x%", String.format("%.0f", mobLoc.getX()))
+                    .replace("%y%", String.format("%.0f", mobLoc.getY()))
+                    .replace("%z%", String.format("%.0f", mobLoc.getZ())));
 
             player.sendMessage(chatMsg);
             playAlertSound(player);
 
-            getLogger().info(consoleMsg);
+            String consoleMsg = String.format("%s oyuncuyu algiladi: %.1fm (X:%.0f Y:%.0f Z:%.0f | Oyuncu: %s)",
+                    mobName, distance, mobLoc.getX(), mobLoc.getY(), mobLoc.getZ(), player.getName());
+
+            if (getConfig().getBoolean("logging.console-logging", true)) {
+                getLogger().info(consoleMsg);
+            }
             logToFile("HEDEF", consoleMsg);
         } else if (target == null && mobTargetMap.containsKey(mobId)) {
             UUID prevPlayerId = mobTargetMap.remove(mobId);
@@ -188,14 +223,19 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
             if (prevPlayer != null && prevPlayer.isOnline()) {
                 double distance = Math.round(entity.getLocation().distance(prevPlayer.getLocation()) * 10.0) / 10.0;
 
+                String template = getConfig().getString("messages.target-lost", "&7%mob% takibi birakti, radarindan ciktiniz. &8(Mesafe: %distance% blok)");
+                String chatMsg = color(getConfig().getString("messages.prefix", "&8[&6Radar&8] ") + template
+                        .replace("%mob%", mobName)
+                        .replace("%distance%", String.valueOf(distance)));
+
+                prevPlayer.sendMessage(chatMsg);
+
                 String consoleMsg = String.format("%s takibi birakti (Mesafe: %.1fm | Oyuncu: %s)",
                         mobName, distance, prevPlayer.getName());
 
-                String chatMsg = String.format("§8[§aRadar§8] §7%s takibi birakti, radarindan ciktiniz. §8(Mesafe: %.1f blok)",
-                        mobName, distance);
-
-                prevPlayer.sendMessage(chatMsg);
-                getLogger().info(consoleMsg);
+                if (getConfig().getBoolean("logging.console-logging", true)) {
+                    getLogger().info(consoleMsg);
+                }
                 logToFile("KOPMA", consoleMsg);
             }
         }
@@ -212,7 +252,8 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
         Location hitLoc = victim.getLocation();
 
         if (victim instanceof PigZombie) {
-            double radius = 35.0;
+            double radius = getConfig().getDouble("alerts.piglin-radius", 35.0);
+            int angerTicks = getConfig().getInt("alerts.piglin-anger-ticks", 600);
             List<Entity> nearby = victim.getNearbyEntities(radius, radius, radius);
             List<PigZombie> alerted = new ArrayList<>();
 
@@ -221,17 +262,21 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
                     PigZombie pz = (PigZombie) e;
                     alerted.add(pz);
                     pz.setTarget(player);
-                    pz.setAnger(600);
+                    pz.setAnger(angerTicks);
                 }
             }
 
             int count = alerted.size();
-            String logMsg = String.format("1 Zombi Piglin'e vuruldu -> 35m icindeki %d Piglin'e haber verildi.", count);
-            String chatMsg = String.format("§8[§ePiglin Alarm§8] §c1 Piglin'e vurdunuz! §735 blok icindeki §c%d §7Zombi Piglin'e haber verildi (30sn ofke).", count);
+            String template = getConfig().getString("messages.piglin-alert", "&8[&ePiglin Alarm&8] &c1 Piglin'e vurdunuz! &735 blok icindeki &c%count% &7Zombi Piglin'e haber verildi.");
+            String chatMsg = color(template.replace("%count%", String.valueOf(count)));
 
             player.sendMessage(chatMsg);
             playAlertSound(player);
-            getLogger().info(logMsg);
+
+            String logMsg = String.format("1 Zombi Piglin'e vuruldu -> %.0fm icindeki %d Piglin'e haber verildi.", radius, count);
+            if (getConfig().getBoolean("logging.console-logging", true)) {
+                getLogger().info(logMsg);
+            }
             logToFile("PIGLIN_ALARM", logMsg);
 
             if (count > 0) {
@@ -247,7 +292,7 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
         } else if (victim instanceof Wolf) {
             Wolf wolf = (Wolf) victim;
             if (!wolf.isTamed()) {
-                double radius = 16.0;
+                double radius = getConfig().getDouble("alerts.wolf-radius", 16.0);
                 List<Entity> nearby = victim.getNearbyEntities(radius, radius, radius);
                 int wolfCount = 0;
                 for (Entity e : nearby) {
@@ -256,12 +301,12 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
                         ((Wolf) e).setTarget(player);
                     }
                 }
-                String msg = String.format("Vahsi kurda vuruldu -> 16m icindeki %d kurt suru saldirisina gecti.", wolfCount);
-                player.sendMessage(String.format("§8[§cKurt Surusu§8] §7Vahsi kurda vurdunuz! 16 bloktaki §c%d kurt §7saldiriya gecti.", wolfCount));
-                logToFile("KURT_ALARM", msg);
+                String template = getConfig().getString("messages.wolf-alert", "&8[&cKurt Surusu&8] &7Vahsi kurda vurdunuz! 16 bloktaki &c%count% kurt &7saldiriya gecti.");
+                player.sendMessage(color(template.replace("%count%", String.valueOf(wolfCount))));
+                logToFile("KURT_ALARM", "Vahsi kurda vuruldu -> " + wolfCount + " kurt saldiriya gecti.");
             }
         } else if (victim instanceof Bee) {
-            double radius = 16.0;
+            double radius = getConfig().getDouble("alerts.bee-radius", 16.0);
             List<Entity> nearby = victim.getNearbyEntities(radius, radius, radius);
             int beeCount = 0;
             for (Entity e : nearby) {
@@ -270,25 +315,41 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
                     ((Bee) e).setTarget(player);
                 }
             }
-            String msg = String.format("Ariya vuruldu -> 16m icindeki %d ari saldiriya gecti.", beeCount);
-            player.sendMessage(String.format("§8[§eAri Alarmi§8] §7Ariya vurdunuz! 16 bloktaki §c%d ari §7saldiriya gecti.", beeCount));
-            logToFile("ARI_ALARM", msg);
+            String template = getConfig().getString("messages.bee-alert", "&8[&eAri Alarmi&8] &7Ariya vurdunuz! 16 bloktaki &c%count% ari &7saldiriya gecti.");
+            player.sendMessage(color(template.replace("%count%", String.valueOf(beeCount))));
+            logToFile("ARI_ALARM", "Ariya vuruldu -> " + beeCount + " ari saldiriya gecti.");
         }
     }
 
     private void playAlertSound(Player player) {
+        if (!getConfig().getBoolean("sound.enabled", true)) {
+            return;
+        }
+
         Long last = lastSoundTime.get(player.getUniqueId());
         long now = System.currentTimeMillis();
         if (last == null || now - last > 1500) {
             lastSoundTime.put(player.getUniqueId(), now);
             try {
-                player.playSound(player.getLocation(), Sound.BLOCK_NOTE_BLOCK_BELL, 1.0f, 1.5f);
+                String soundName = getConfig().getString("sound.type", "BLOCK_NOTE_BLOCK_BELL");
+                Sound sound = Sound.valueOf(soundName);
+                float volume = (float) getConfig().getDouble("sound.volume", 1.0);
+                float pitch = (float) getConfig().getDouble("sound.pitch", 1.5);
+                player.playSound(player.getLocation(), sound, volume, pitch);
             } catch (Throwable ignored) {}
         }
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        if (args.length > 0 && (args[0].equalsIgnoreCase("reload") || args[0].equalsIgnoreCase("yenile"))) {
+            if (sender.hasPermission("mobradar.admin") || sender.isOp() || !(sender instanceof Player)) {
+                reloadConfig();
+                sender.sendMessage("§8[§6Radar§8] §aYapilandirma dosyasi (config.yml) basariyla yenilendi.");
+                return true;
+            }
+        }
+
         if (!(sender instanceof Player)) {
             sender.sendMessage("[MobRadar] Bu komut sadece oyuncular tarafindan kullanilabilir.");
             return true;
@@ -347,6 +408,9 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
         player.sendMessage("§f/radar ac §7- Ekran radarini acar");
         player.sendMessage("§f/radar kapat §7- Ekran radarini kapatir");
         player.sendMessage("§f/radar liste §7- Yakinlardaki moblari listeler");
+        if (player.isOp()) {
+            player.sendMessage("§f/radar reload §7- config.yml dosyasini yeniler");
+        }
         return true;
     }
 

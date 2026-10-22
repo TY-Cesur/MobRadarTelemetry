@@ -1,0 +1,52 @@
+# ========================================================
+#          MobRadarTelemetry - Yapilandirma Dosyasi
+# ========================================================
+
+# Surekli Acik Ekran Radari (Action Bar HUD) Ayarlari
+hud:
+  # Oyuncu oyuna girdiginde radar HUD'i otomatik acilsin mi?
+  enabled-by-default: true
+  # Taranacak alan yaricapi (blok cinsinden)
+  scan-radius: 40.0
+  # HUD guncelleme araligi (tick cinsinden: 20 tick = 1 saniye, 10 tick = 0.5 saniye)
+  update-interval-ticks: 10
+
+# Alarm ve Suru Uyarisi Menzil Ayarlari
+alerts:
+  # Bir Zombi Pigline vuruldugunda uyarilacak alan yaricapi (blok)
+  piglin-radius: 35.0
+  # Zombi Piglinlerin ofke suresi (tick cinsinden: 600 tick = 30 saniye)
+  piglin-anger-ticks: 600
+  # Vahsi kurt surusu alarm menzili (blok)
+  wolf-radius: 16.0
+  # Ari kovani alarm menzili (blok)
+  bee-radius: 16.0
+
+# Ses Bildirimi Ayarlari
+sound:
+  # Mob seni radara aldiginda zil sesi calsin mi?
+  enabled: true
+  # Calinacak ses turu (Minecraft Sound enum: BLOCK_NOTE_BLOCK_BELL, UI_BUTTON_CLICK, vb.)
+  type: "BLOCK_NOTE_BLOCK_BELL"
+  volume: 1.0
+  pitch: 1.5
+
+# Loglama Ayarlari
+logging:
+  # plugins/MobRadarTelemetry/radar.log dosyasina telemetri kaydedilsin mi?
+  file-logging: true
+  # Sunucu konsoluna bilgi basilsin mi?
+  console-logging: true
+
+# Oyun Ici Bildirim Mesajlari
+messages:
+  prefix: "&8[&6Radar&8] "
+  target-acquired: "&c%mob% &7sizi &e%distance% blok &7mesafeden algiladi! &8(X:%x% Y:%y% Z:%z%)"
+  target-lost: "&7%mob% takibi birakti, radarindan ciktiniz. &8(Mesafe: %distance% blok)"
+  piglin-alert: "&8[&ePiglin Alarm&8] &c1 Piglin'e vurdunuz! &735 blok icindeki &c%count% &7Zombi Piglin'e haber verildi."
+  wolf-alert: "&8[&cKurt Surusu&8] &7Vahsi kurda vurdunuz! 16 bloktaki &c%count% kurt &7saldiriya gecti."
+  bee-alert: "&8[&eAri Alarmi&8] &7Ariya vurdunuz! 16 bloktaki &c%count% ari &7saldiriya gecti."
+  hud-safe: "&a[Radar] Guvendesin &8(Yakininda mob yok)"
+  hud-safe-nearby: "&a[Radar] Guvendesin &8| &7En yakin: %mob% (%distance%m) &8| &7Toplam: %total%"
+  hud-warning: "&6[Radar] &7En yakin: %mob% (%distance%m) &8| &7Cevrede: %total% mob"
+  hud-danger: "&c[DIKKAT] %mob% seni hedef aldi! (%distance%m) &8| &7Takip: &c%targeting% mob &8| &7Cevrede: %total%"
