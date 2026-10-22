@@ -9,6 +9,7 @@ ignored-mobs:
   - "BAT"
   - "SLIME"
   - "MAGMA_CUBE"
+  - "EXPERIENCE_ORB"
 
 # Surekli Acik Ekran Radari (Action Bar HUD) Ayarlari
 hud:

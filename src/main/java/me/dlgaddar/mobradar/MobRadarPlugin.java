@@ -209,6 +209,11 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
     public void onEntityTarget(EntityTargetLivingEntityEvent event) {
         Entity entity = event.getEntity();
 
+        // Sadece canli moblar hedef alma uyarisi verebilir (tecrube kuresi vb. haric)
+        if (!(entity instanceof Mob)) {
+            return;
+        }
+
         // Kara listedeki moblari yoksay
         if (isMobIgnored(entity.getType())) {
             return;
