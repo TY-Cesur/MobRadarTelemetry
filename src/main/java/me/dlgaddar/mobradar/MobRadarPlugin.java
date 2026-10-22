@@ -13,6 +13,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.entity.EntityTargetLivingEntityEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -91,6 +92,45 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
         return ignoredMobs.contains(type.name().toUpperCase());
     }
 
+    private boolean isThreat(Entity e, Player player) {
+        if (!(e instanceof LivingEntity)) {
+            return false;
+        }
+
+        if (e instanceof Player || e instanceof ArmorStand) {
+            return false;
+        }
+
+        if (isMobIgnored(e.getType())) {
+            return false;
+        }
+
+        // 1) Tum Bukkit Enemy moblari: Slime, MagmaCube, Phantom, Ghast, Shulker, Hoglin, Warden, Zoglin, Monster vb.
+        if (e instanceof Enemy) {
+            return true;
+        }
+
+        // 2) Klasik Monster kontrolu
+        if (e instanceof Monster) {
+            return true;
+        }
+
+        // 3) Herhangi bir canli mob su anda oyuncuyu hedef aliyorsa (kurt, ari, demir golem vb.)
+        if (e instanceof Mob) {
+            LivingEntity target = ((Mob) e).getTarget();
+            if (target != null && player != null && target.getUniqueId().equals(player.getUniqueId())) {
+                return true;
+            }
+        }
+
+        // 4) Vahsi ofkeli kurt
+        if (e instanceof Wolf && ((Wolf) e).isAngry()) {
+            return true;
+        }
+
+        return false;
+    }
+
     private synchronized void logToFile(String tag, String message) {
         if (!getConfig().getBoolean("logging.file-logging", true)) {
             return;
@@ -141,28 +181,52 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
             double threatDistance = Double.MAX_VALUE;
 
             for (Entity e : nearby) {
-                // Kara listedeki moblari filtrele
-                if (isMobIgnored(e.getType())) {
+                if (!isThreat(e, player)) {
                     continue;
                 }
 
-                if (e instanceof Monster) {
-                    totalHostiles++;
-                    double dist = Math.round(e.getLocation().distance(pLoc) * 10.0) / 10.0;
+                totalHostiles++;
+                double dist = Math.round(e.getLocation().distance(pLoc) * 10.0) / 10.0;
 
-                    if (dist < nearestDistance) {
-                        nearestDistance = dist;
-                        nearestMobName = getMobName(e.getType());
+                if (dist < nearestDistance) {
+                    nearestDistance = dist;
+                    nearestMobName = getMobName(e.getType());
+                }
+
+                if (e instanceof Mob) {
+                    Mob mob = (Mob) e;
+                    LivingEntity target = mob.getTarget();
+                    if (target != null && target.getUniqueId().equals(player.getUniqueId())) {
+                        targetingCount++;
+                        if (dist < threatDistance) {
+                            threatDistance = dist;
+                            threatMobName = getMobName(e.getType());
+                        }
+
+                        // Event kacirildiysa veya mob onceden hedeflendiyse
+                        if (!mobTargetMap.containsKey(mob.getUniqueId())) {
+                            mobTargetMap.put(mob.getUniqueId(), player.getUniqueId());
+                            notifyTargetAcquired(mob, player, dist);
+                        }
                     }
+                }
+            }
 
-                    if (e instanceof Mob) {
-                        LivingEntity target = ((Mob) e).getTarget();
-                        if (target != null && target.getUniqueId().equals(player.getUniqueId())) {
-                            targetingCount++;
-                            if (dist < threatDistance) {
-                                threatDistance = dist;
-                                threatMobName = getMobName(e.getType());
-                            }
+            // Aktif takipteki moblar hedefi biraktiysa veya menzilden ciktiysa kopma bildirimi gonder
+            Iterator<Map.Entry<UUID, UUID>> it = mobTargetMap.entrySet().iterator();
+            while (it.hasNext()) {
+                Map.Entry<UUID, UUID> entry = it.next();
+                if (entry.getValue().equals(player.getUniqueId())) {
+                    Entity tracked = Bukkit.getEntity(entry.getKey());
+                    if (tracked == null || !tracked.isValid() || tracked.isDead()) {
+                        it.remove();
+                    } else if (tracked instanceof Mob) {
+                        Mob mob = (Mob) tracked;
+                        LivingEntity target = mob.getTarget();
+                        if (target == null || !target.getUniqueId().equals(player.getUniqueId())) {
+                            it.remove();
+                            double dist = Math.round(tracked.getLocation().distance(pLoc) * 10.0) / 10.0;
+                            notifyTargetLost(tracked, player, dist);
                         }
                     }
                 }
@@ -205,73 +269,83 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
         }
     }
 
+    private void notifyTargetAcquired(Mob mob, Player player, double distance) {
+        Location mobLoc = mob.getLocation();
+        String mobName = getMobName(mob.getType());
+
+        String template = getConfig().getString("messages.target-acquired", "&c%mob% &7sizi &e%distance% blok &7mesafeden algiladi! &8(X:%x% Y:%y% Z:%z%)");
+        String chatMsg = color(getConfig().getString("messages.prefix", "&8[&6Radar&8] ") + template
+                .replace("%mob%", mobName)
+                .replace("%distance%", String.valueOf(distance))
+                .replace("%x%", String.format("%.0f", mobLoc.getX()))
+                .replace("%y%", String.format("%.0f", mobLoc.getY()))
+                .replace("%z%", String.format("%.0f", mobLoc.getZ())));
+
+        player.sendMessage(chatMsg);
+        playAlertSound(player);
+
+        String consoleMsg = String.format("%s oyuncuyu algiladi: %.1fm (X:%.0f Y:%.0f Z:%.0f | Oyuncu: %s)",
+                mobName, distance, mobLoc.getX(), mobLoc.getY(), mobLoc.getZ(), player.getName());
+
+        if (getConfig().getBoolean("logging.console-logging", true)) {
+            getLogger().info(consoleMsg);
+        }
+        logToFile("HEDEF", consoleMsg);
+    }
+
+    private void notifyTargetLost(Entity mob, Player player, double distance) {
+        String mobName = getMobName(mob.getType());
+        String template = getConfig().getString("messages.target-lost", "&7%mob% takibi birakti, radarindan ciktiniz. &8(Mesafe: %distance% blok)");
+        String chatMsg = color(getConfig().getString("messages.prefix", "&8[&6Radar&8] ") + template
+                .replace("%mob%", mobName)
+                .replace("%distance%", String.valueOf(distance)));
+
+        player.sendMessage(chatMsg);
+
+        String consoleMsg = String.format("%s takibi birakti (Mesafe: %.1fm | Oyuncu: %s)",
+                mobName, distance, player.getName());
+
+        if (getConfig().getBoolean("logging.console-logging", true)) {
+            getLogger().info(consoleMsg);
+        }
+        logToFile("KOPMA", consoleMsg);
+    }
+
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onEntityTarget(EntityTargetLivingEntityEvent event) {
         Entity entity = event.getEntity();
 
-        // Sadece canli moblar hedef alma uyarisi verebilir (tecrube kuresi vb. haric)
         if (!(entity instanceof Mob)) {
             return;
         }
 
-        // Kara listedeki moblari yoksay
         if (isMobIgnored(entity.getType())) {
             return;
         }
 
         LivingEntity target = event.getTarget();
         UUID mobId = entity.getUniqueId();
-        String mobName = getMobName(entity.getType());
 
         if (target instanceof Player) {
             Player player = (Player) target;
-            Location mobLoc = entity.getLocation();
-            Location playerLoc = player.getLocation();
-            double distance = Math.round(mobLoc.distance(playerLoc) * 10.0) / 10.0;
-
-            mobTargetMap.put(mobId, player.getUniqueId());
-
-            String template = getConfig().getString("messages.target-acquired", "&c%mob% &7sizi &e%distance% blok &7mesafeden algiladi! &8(X:%x% Y:%y% Z:%z%)");
-            String chatMsg = color(getConfig().getString("messages.prefix", "&8[&6Radar&8] ") + template
-                    .replace("%mob%", mobName)
-                    .replace("%distance%", String.valueOf(distance))
-                    .replace("%x%", String.format("%.0f", mobLoc.getX()))
-                    .replace("%y%", String.format("%.0f", mobLoc.getY()))
-                    .replace("%z%", String.format("%.0f", mobLoc.getZ())));
-
-            player.sendMessage(chatMsg);
-            playAlertSound(player);
-
-            String consoleMsg = String.format("%s oyuncuyu algiladi: %.1fm (X:%.0f Y:%.0f Z:%.0f | Oyuncu: %s)",
-                    mobName, distance, mobLoc.getX(), mobLoc.getY(), mobLoc.getZ(), player.getName());
-
-            if (getConfig().getBoolean("logging.console-logging", true)) {
-                getLogger().info(consoleMsg);
+            if (!mobTargetMap.containsKey(mobId)) {
+                mobTargetMap.put(mobId, player.getUniqueId());
+                double distance = Math.round(entity.getLocation().distance(player.getLocation()) * 10.0) / 10.0;
+                notifyTargetAcquired((Mob) entity, player, distance);
             }
-            logToFile("HEDEF", consoleMsg);
         } else if (target == null && mobTargetMap.containsKey(mobId)) {
             UUID prevPlayerId = mobTargetMap.remove(mobId);
             Player prevPlayer = Bukkit.getPlayer(prevPlayerId);
-
             if (prevPlayer != null && prevPlayer.isOnline()) {
                 double distance = Math.round(entity.getLocation().distance(prevPlayer.getLocation()) * 10.0) / 10.0;
-
-                String template = getConfig().getString("messages.target-lost", "&7%mob% takibi birakti, radarindan ciktiniz. &8(Mesafe: %distance% blok)");
-                String chatMsg = color(getConfig().getString("messages.prefix", "&8[&6Radar&8] ") + template
-                        .replace("%mob%", mobName)
-                        .replace("%distance%", String.valueOf(distance)));
-
-                prevPlayer.sendMessage(chatMsg);
-
-                String consoleMsg = String.format("%s takibi birakti (Mesafe: %.1fm | Oyuncu: %s)",
-                        mobName, distance, prevPlayer.getName());
-
-                if (getConfig().getBoolean("logging.console-logging", true)) {
-                    getLogger().info(consoleMsg);
-                }
-                logToFile("KOPMA", consoleMsg);
+                notifyTargetLost(entity, prevPlayer, distance);
             }
         }
+    }
+
+    @EventHandler
+    public void onEntityDeath(EntityDeathEvent event) {
+        mobTargetMap.remove(event.getEntity().getUniqueId());
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -415,25 +489,23 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
                 int count = 0;
 
                 for (Entity e : nearby) {
-                    if (isMobIgnored(e.getType())) {
+                    if (!isThreat(e, player)) {
                         continue;
                     }
 
-                    if (e instanceof Monster) {
-                        count++;
-                        double dist = Math.round(e.getLocation().distance(player.getLocation()) * 10.0) / 10.0;
-                        String name = getMobName(e.getType());
-                        Location loc = e.getLocation();
+                    count++;
+                    double dist = Math.round(e.getLocation().distance(player.getLocation()) * 10.0) / 10.0;
+                    String name = getMobName(e.getType());
+                    Location loc = e.getLocation();
 
-                        boolean targeting = false;
-                        if (e instanceof Mob && ((Mob) e).getTarget() != null) {
-                            targeting = ((Mob) e).getTarget().getUniqueId().equals(player.getUniqueId());
-                        }
-
-                        String mark = targeting ? " §c[Sana Kilitlendi]" : "";
-                        player.sendMessage(String.format(" §7- §f%s §7(§e%.1fm§7) §8[%.0f, %.0f, %.0f]%s",
-                                name, dist, loc.getX(), loc.getY(), loc.getZ(), mark));
+                    boolean targeting = false;
+                    if (e instanceof Mob && ((Mob) e).getTarget() != null) {
+                        targeting = ((Mob) e).getTarget().getUniqueId().equals(player.getUniqueId());
                     }
+
+                    String mark = targeting ? " §c[Sana Kilitlendi]" : "";
+                    player.sendMessage(String.format(" §7- §f%s §7(§e%.1fm§7) §8[%.0f, %.0f, %.0f]%s",
+                            name, dist, loc.getX(), loc.getY(), loc.getZ(), mark));
                 }
 
                 if (count == 0) {
@@ -469,6 +541,7 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
     }
 
     private String getMobName(EntityType type) {
+        if (type == null) return "Bilinmeyen";
         switch (type) {
             case ZOMBIE: return "Zombi";
             case SKELETON: return "Iskelet";
@@ -495,6 +568,20 @@ public class MobRadarPlugin extends JavaPlugin implements Listener, CommandExecu
             case IRON_GOLEM: return "Demir Golem";
             case ENDER_DRAGON: return "Ender Dragon";
             case WITHER: return "Wither";
+            case SHULKER: return "Shulker";
+            case SILVERFISH: return "Gumusbaligi";
+            case ENDERMITE: return "Endermite";
+            case GUARDIAN: return "Muhafiz";
+            case ELDER_GUARDIAN: return "Yasli Muhafiz";
+            case HOGLIN: return "Hoglin";
+            case ZOGLIN: return "Zoglin";
+            case PILLAGER: return "Yagmaci";
+            case VINDICATOR: return "Intikamci";
+            case EVOKER: return "Cagirici";
+            case RAVAGER: return "Yikici";
+            case VEX: return "Vex";
+            case BREEZE: return "Breeze";
+            case BOGGED: return "Bogged";
             default: return type.name();
         }
     }
