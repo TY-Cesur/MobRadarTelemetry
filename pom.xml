@@ -4,13 +4,13 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.antigravity</groupId>
+    <groupId>me.dlgaddar</groupId>
     <artifactId>MobRadarTelemetry</artifactId>
     <version>1.1.0</version>
     <packaging>jar</packaging>
 
     <name>MobRadarTelemetry</name>
-    <description>Minecraft canli mob algilama karesi, radar ve Zombi Piglin alarm telemetri eklentisi.</description>
+    <description>Minecraft canli mob algilama, radar ve Zombi Piglin alarm telemetri eklentisi.</description>
 
     <properties>
         <java.version>21</java.version>
